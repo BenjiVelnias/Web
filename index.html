@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ODISEA-IX</title>
+  <style>
+    :root {
+      --amber: #ffb347;
+      --amber-dim: rgba(255, 179, 71, 0.35);
+      --red: #ff4a2a;
+      --cyan: #7fd8ff;
+      --panel: rgba(12, 9, 7, 0.72);
+      --line: rgba(255, 179, 71, 0.55);
+      --mono: Consolas, 'Lucida Console', 'Courier New', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: var(--amber); font-family: var(--mono); }
+    canvas#view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; }
+
+    /* ---------------------------------------------------------------- HUD */
+    #hud { position: fixed; inset: 0; pointer-events: none; transition: opacity .8s; }
+    #hud.hidden { opacity: 0; }
+    #hud::before {
+      content: ''; position: absolute; inset: 0;
+      background: repeating-linear-gradient(0deg, rgba(0,0,0,.12) 0 1px, transparent 1px 3px);
+      mix-blend-mode: multiply;
+    }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line);
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+      box-shadow: inset 0 0 18px rgba(255, 140, 40, .08);
+    }
+
+    #status { position: absolute; top: 18px; left: 18px; padding: 10px 16px 12px; min-width: 240px; max-width: 44vw; font-size: 12px; letter-spacing: .14em; }
+    #status .hdr { display: flex; justify-content: space-between; color: var(--amber); opacity: .8; margin-bottom: 6px; }
+    #status .hdr::after { content: '● REC'; color: var(--red); animation: blink 1.4s steps(2) infinite; }
+    #location { font-size: 13px; letter-spacing: .14em; color: #ffd9a0; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meter { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+    .meter .track { flex: 1; height: 6px; background: rgba(255,179,71,.12); border: 1px solid var(--amber-dim); }
+    #o2-bar { height: 100%; width: 100%; background: linear-gradient(90deg, var(--amber), #ffd27a); transition: width .4s; }
+    #o2-bar.low { background: var(--red); animation: blink .8s steps(2) infinite; }
+    .meter + .meter { margin-top: 4px; }
+    .meter .track.thin { height: 3px; }
+    #hp-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #3fdc6a, #a8ffb8); transition: width .2s; }
+    #hp-bar.low { background: var(--red); animation: blink .6s steps(2) infinite; }
+    #st-bar { height: 100%; width: 100%; background: rgba(255, 220, 160, .75); }
+    .ecg-row { display: flex; align-items: center; gap: 10px; margin-top: 7px; font-size: 10px; letter-spacing: .15em; }
+    #ecg { width: 150px; height: 34px; border: 1px solid var(--amber-dim); background: rgba(0, 24, 10, .4); }
+    #bpm { display: block; font-size: 17px; color: #5aff8a; font-weight: normal; letter-spacing: .05em; }
+    #vac { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); padding: 5px 14px; font-size: 12px; letter-spacing: .3em; white-space: nowrap;
+      color: #ffd0c8; background: rgba(120, 10, 0, .7); border: 1px solid var(--red); opacity: 0; transition: opacity .3s; }
+    #vac.on { opacity: 1; animation: blink 1.1s steps(2) infinite; }
+    #sys-warn { position: absolute; right: 18px; bottom: 18px; max-width: 40vw; padding: 5px 10px; font-size: 10px; letter-spacing: .15em;
+      color: #ffd0c8; background: rgba(80, 10, 0, .7); opacity: 0; }
+    #sys-warn.on { opacity: 1; }
+    .toast.save { color: var(--cyan); border-left-color: var(--cyan); }
+
+    /* Descifrado XOR */
+    #xor { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(430px, 92vw); max-height: 92vh; padding: 12px 16px 14px; z-index: 2;
+      background: rgba(10, 8, 6, .94); opacity: 0; transition: opacity .2s; font-size: 11px; letter-spacing: .15em; }
+    #xor.on { opacity: 1; }
+    #xor.fail { animation: xorFail .35s; }
+    #xor-title { font-size: 12px; letter-spacing: .25em; color: var(--cyan); margin-bottom: 8px; }
+    .xrow, .xkey { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+    .xrow .lbl, .xkey b { width: 52px; font-size: 10px; letter-spacing: .2em; font-weight: normal; }
+    .xkey b { color: var(--amber); }
+    .xkey { opacity: .7; }
+    .xkey.used { opacity: 1; }
+    .xkey.used b::after { content: ' ⊕'; color: #5aff8a; }
+    .bits { display: flex; gap: 3px; }
+    .bits i { width: 15px; height: 15px; border: 1px solid rgba(127, 216, 255, .45); background: rgba(127, 216, 255, .05); }
+    .bits i.on { background: #7fd8ff; box-shadow: 0 0 6px rgba(127, 216, 255, .8); }
+    #xor-target i.on { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 6px rgba(255, 179, 71, .8); }
+    #xor-reg.match i.on { background: #5aff8a; border-color: #5aff8a; }
+    #xor .xsep { height: 1px; margin: 8px 0; background: var(--line); opacity: .5; }
+    #xor .tbar { height: 4px; margin-top: 10px; border: 1px solid var(--line); }
+    #xor-time { height: 100%; width: 100%; background: var(--cyan); }
+    #xor-time.low { background: var(--red); }
+    #xor .foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; }
+    #xor-pips { color: #5aff8a; letter-spacing: .3em; }
+
+    /* Bitácoras */
+    #log { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(620px, 92vw); max-height: 80vh; padding: 18px 22px 14px; z-index: 2;
+      background: rgba(10, 8, 6, .94); display: flex; flex-direction: column; opacity: 0; transition: opacity .25s; }
+    #log.on { opacity: 1; }
+    #log-title { font-size: 14px; letter-spacing: .25em; color: var(--cyan); }
+    #log-meta { font-size: 11px; letter-spacing: .12em; opacity: .7; margin: 4px 0 12px; }
+    #log-body { overflow-y: hidden; font-size: 13px; line-height: 1.65; color: #f0dcc0; flex: 1; min-height: 0; }
+    #log-body p { margin-bottom: 10px; }
+    #log .foot { margin-top: 8px; font-size: 10px; letter-spacing: .2em; opacity: .7; }
+
+    /* Muerte */
+    #death { opacity: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(70, 0, 0, .45), rgba(0, 0, 0, .95)); transition: opacity 1.6s; }
+    #death.on { opacity: 1; pointer-events: auto; cursor: pointer; }
+    #death h1 { color: #ff8a70; text-shadow: 0 0 18px rgba(255, 40, 20, .6); }
+    #death-hint { color: var(--cyan); letter-spacing: .15em; font-size: 12px; min-height: 1.4em; }
+
+    #objective {
+      position: absolute; top: 18px; right: 18px; max-width: min(420px, 44vw); padding: 10px 16px;
+      font-size: 13px; letter-spacing: .08em; color: #ffe2b8; text-align: right;
+    }
+    #objective .tag { display: block; font-size: 10px; letter-spacing: .3em; color: var(--amber); margin-bottom: 4px; }
+    #objective.pulse { animation: objPulse 1.6s ease-out; }
+
+    #reticle { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%); transition: transform .15s, width .15s, height .15s; }
+    #reticle::before, #reticle::after { content: ''; position: absolute; background: rgba(255, 220, 180, .75); }
+    #reticle::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%);
+      -webkit-mask: linear-gradient(#000 0 35%, transparent 35% 65%, #000 65%); mask: linear-gradient(#000 0 35%, transparent 35% 65%, #000 65%); }
+    #reticle::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%);
+      -webkit-mask: linear-gradient(90deg, #000 0 35%, transparent 35% 65%, #000 65%); mask: linear-gradient(90deg, #000 0 35%, transparent 35% 65%, #000 65%); }
+    #reticle .dot { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px; background: #fff; transform: translate(-50%, -50%); }
+    #reticle.active { width: 40px; height: 40px; }
+    #reticle.active::before, #reticle.active::after { background: var(--amber); }
+    #reticle.active .ring { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1); }
+    #reticle .ring { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; border: 1px solid var(--amber);
+      transform: translate(-50%, -50%) rotate(45deg) scale(.4); opacity: 0; transition: all .2s; }
+
+    #prompt { position: absolute; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); padding: 6px 14px;
+      font-size: 13px; letter-spacing: .15em; white-space: nowrap; opacity: 0; transition: opacity .15s;
+      background: var(--panel); border-left: 3px solid var(--amber); }
+    #prompt.on { opacity: 1; }
+    #prompt.warn { color: var(--red); border-left-color: var(--red); }
+
+    #toasts { position: absolute; left: 18px; bottom: 120px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    .toast { padding: 6px 14px 6px 12px; font-size: 12px; letter-spacing: .12em; background: var(--panel);
+      border-left: 3px solid var(--amber); animation: toastIn .3s ease-out; transition: opacity .5s, transform .5s; }
+    .toast.warn { color: var(--red); border-left-color: var(--red); }
+    .toast.out { opacity: 0; transform: translateX(-20px); }
+
+    #inventory { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 8px; padding: 10px 12px 12px; }
+    #inventory::before { content: ''; position: absolute; left: 0; right: 0; top: -6px; height: 4px;
+      background: repeating-linear-gradient(-45deg, var(--amber) 0 6px, transparent 6px 12px); opacity: .55; }
+    .slot { position: relative; width: min(66px, 15vw); height: min(66px, 15vw); border: 1px solid rgba(255,179,71,.3);
+      background: linear-gradient(180deg, rgba(255,179,71,.06), rgba(0,0,0,.35)); display: grid; place-items: center; transition: all .15s; }
+    .slot .key { position: absolute; top: 2px; left: 4px; font-size: 10px; opacity: .6; }
+    .slot .icon { width: 58%; height: 58%; color: rgba(255,179,71,.35); }
+    .slot .icon svg { width: 100%; height: 100%; }
+    .slot .name { position: absolute; bottom: 2px; width: 100%; text-align: center; font-size: 8px; letter-spacing: .08em; opacity: .75; }
+    .slot.filled .icon { color: #ffd9a0; filter: drop-shadow(0 0 4px rgba(255,160,60,.6)); }
+    .slot.active { border-color: var(--amber); box-shadow: 0 0 12px rgba(255,160,60,.45), inset 0 0 12px rgba(255,160,60,.2); transform: translateY(-3px); }
+    #item-label { position: absolute; left: 50%; bottom: calc(18px + min(66px, 15vw) + 34px); transform: translateX(-50%);
+      text-align: center; font-size: 11px; letter-spacing: .1em; opacity: 0; transition: opacity .2s; white-space: nowrap; }
+    #item-label.on { opacity: 1; }
+    #item-label b { display: block; color: #ffe2b8; font-size: 12px; letter-spacing: .2em; }
+    #item-label span { opacity: .7; }
+
+    /* --------------------------------------------------------- Cinemática */
+    #cinebars::before, #cinebars::after { content: ''; position: fixed; left: 0; right: 0; height: 11vh; background: #000; transition: transform 1.2s cubic-bezier(.7,0,.3,1); z-index: 5; pointer-events: none; }
+    #cinebars::before { top: 0; transform: translateY(-100%); }
+    #cinebars::after { bottom: 0; transform: translateY(100%); }
+    #cinebars.on::before, #cinebars.on::after { transform: translateY(0); }
+
+    /* Rótulo de la cinemática: dentro de la barra superior, nunca sobre la escena. */
+    #caption { position: fixed; left: 28px; top: calc(5.5vh - 18px); z-index: 6; pointer-events: none; font-size: 11px;
+      letter-spacing: .3em; color: rgba(255, 220, 180, .7); opacity: 0; transition: opacity .6s; }
+    #caption.on { opacity: 1; }
+    #caption b { display: block; font-size: 15px; letter-spacing: .42em; color: var(--amber); margin-bottom: 3px; font-weight: normal; }
+
+    /* Alerta de contención */
+    #alert { position: fixed; inset: 0; pointer-events: none; z-index: 3; opacity: 0; transition: opacity .6s;
+      box-shadow: inset 0 0 0 3px rgba(255, 40, 20, .6), inset 0 0 90px rgba(255, 20, 10, .35); animation: alertPulse 1.5s ease-in-out infinite; }
+    #alert.on { opacity: 1; }
+    #alert .banner { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); padding: 6px 18px; font-size: 13px;
+      letter-spacing: .4em; color: #ffd0c8; white-space: nowrap;
+      background: repeating-linear-gradient(-45deg, rgba(255,40,20,.85) 0 10px, rgba(60,0,0,.85) 10px 20px); }
+    #hud.alert .panel { border-color: rgba(255, 74, 42, .7); }
+    #hud.alert #status .hdr, #hud.alert #objective .tag { color: var(--red); }
+
+    /* Carga del rifle de plasma */
+    #weapon { position: absolute; right: 18px; bottom: 130px; width: 190px; padding: 8px 12px 10px; opacity: 0; transition: opacity .25s; font-size: 11px; letter-spacing: .18em; color: var(--cyan); }
+    #weapon.on { opacity: 1; }
+    #weapon .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+    #weapon .track { height: 6px; border: 1px solid rgba(127, 216, 255, .5); background: rgba(127, 216, 255, .08); }
+    #weapon-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #3fb8ff, #bff0ff); box-shadow: 0 0 8px rgba(100, 210, 255, .8); }
+    #weapon.low #weapon-bar { background: var(--red); box-shadow: none; }
+
+    /* Minijuego de pirateo */
+    #hack { position: absolute; left: 50%; top: calc(50% + 70px); transform: translateX(-50%); width: min(460px, 86vw); padding: 12px 16px 14px;
+      opacity: 0; transition: opacity .2s; }
+    #hack.on { opacity: 1; }
+    #hack.fail { animation: hackFail .35s; }
+    #hack-title { font-size: 12px; letter-spacing: .25em; color: var(--cyan); margin-bottom: 8px; }
+    #hack .bar { position: relative; height: 22px; border: 1px solid var(--line); background: repeating-linear-gradient(90deg, rgba(255,179,71,.08) 0 2px, transparent 2px 12px); }
+    #hack-zone { position: absolute; top: 0; bottom: 0; background: rgba(60, 255, 120, .28); border-left: 2px solid #5aff8a; border-right: 2px solid #5aff8a; }
+    #hack-cursor { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1px; background: #fff; box-shadow: 0 0 8px #fff; }
+    #hack .foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; letter-spacing: .15em; }
+    #hack-pips { color: #5aff8a; letter-spacing: .3em; }
+
+    #fade { position: fixed; inset: 0; background: #000; opacity: 1; pointer-events: none; z-index: 4; }
+
+    /* ---------------------------------------------------------- Overlays */
+    .overlay { position: fixed; inset: 0; display: grid; place-items: center; z-index: 10; padding: 16px;
+      background: radial-gradient(ellipse at center, rgba(20,8,4,.55), rgba(0,0,0,.92)); transition: opacity .6s; }
+    .overlay.hidden { opacity: 0; pointer-events: none; }
+    .card { width: min(560px, 100%); padding: 28px 30px 26px; }
+    .card h1 { font-size: clamp(34px, 8vw, 58px); letter-spacing: .32em; color: #ffd9a0; text-shadow: 0 0 18px rgba(255,120,40,.5); }
+    .card h2 { font-size: 12px; letter-spacing: .35em; color: var(--amber); opacity: .8; margin: 4px 0 18px; }
+    .card p { font-size: 13px; line-height: 1.6; color: #e9d6bd; opacity: .85; margin-bottom: 14px; }
+    .stripe { height: 6px; margin: 14px 0; background: repeating-linear-gradient(-45deg, var(--amber) 0 8px, #140d06 8px 16px); opacity: .7; }
+    #boot-status { font-size: 12px; letter-spacing: .2em; color: var(--cyan); min-height: 1.4em; }
+    #boot-status::after { content: '_'; animation: blink .8s steps(2) infinite; }
+    .btn { margin-top: 18px; width: 100%; padding: 14px; font: inherit; font-size: 15px; letter-spacing: .35em; color: #140d06;
+      background: var(--amber); border: 0; cursor: pointer; clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); transition: filter .2s; }
+    .btn:hover { filter: brightness(1.15); }
+    .btn:disabled { background: #4a3a26; color: #8a7458; cursor: wait; }
+    .controls { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 11px; letter-spacing: .1em; margin-top: 16px; color: #d8c4a8; }
+    .controls kbd { color: var(--amber); font-family: inherit; }
+    #pause, #end { opacity: 0; pointer-events: none; }
+    #pause.on, #end.on { opacity: 1; pointer-events: auto; }
+    #pause { cursor: pointer; }
+
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(-20px); } }
+    @keyframes alertPulse { 50% { box-shadow: inset 0 0 0 3px rgba(255, 40, 20, .25), inset 0 0 40px rgba(255, 20, 10, .12); } }
+    @keyframes hackFail { 0%, 100% { transform: translateX(-50%); } 25% { transform: translateX(calc(-50% - 8px)); background: rgba(120, 0, 0, .7); } 75% { transform: translateX(calc(-50% + 8px)); } }
+    @keyframes xorFail { 0%, 100% { transform: translate(-50%, -50%); } 25% { transform: translate(calc(-50% - 8px), -50%); background: rgba(120, 0, 0, .8); } 75% { transform: translate(calc(-50% + 8px), -50%); } }
+    @keyframes objPulse { 0% { box-shadow: 0 0 0 0 rgba(255,179,71,.8); background: rgba(255,179,71,.25); } 100% { box-shadow: 0 0 0 18px rgba(255,179,71,0); } }
+
+    @media (max-width: 640px) {
+      #status { min-width: 0; font-size: 10px; padding: 8px 12px; }
+      #location { font-size: 12px; }
+      #objective { font-size: 11px; }
+      #inventory { gap: 5px; padding: 8px; }
+      #ecg { width: 100px; }
+    }
+  </style>
+  <!-- Mapa de importación generado al cargar: cada módulo local se pide con una
+       versión única (?v=…), así el navegador NUNCA ejecuta código antiguo de su
+       caché tras una actualización (los módulos ES se cachean agresivamente). -->
+  <script>
+    (function () {
+      var v = Date.now().toString(36), mods = ["audio.js","batching.js","decrypt.js","enemies.js","engine.js","hazards.js","hologram.js","intro.js","items.js","level-upper.js","level.js","logs.js","mannequin.js","mission.js","music.js","physics.js","player.js","procedural-assets.js","save.js","viewmodel.js","volumetric.js"], imports = {
+        three: 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+        'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/',
+      };
+      for (var i = 0; i < mods.length; i++) imports['./' + mods[i]] = './' + mods[i] + '?v=' + v;
+      var s = document.createElement('script');
+      s.type = 'importmap';
+      s.textContent = JSON.stringify({ imports: imports });
+      document.currentScript.after(s);
+    })();
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="status" class="panel">
+      <div class="hdr">TRAJE EVA-7</div>
+      <div id="location">ESCLUSA 2</div>
+      <div class="meter">O₂ <div class="track"><div id="o2-bar"></div></div><span id="o2">100%</span></div>
+      <div class="meter">SV <div class="track"><div id="hp-bar"></div></div><span id="hp">100</span></div>
+      <div class="meter">RS <div class="track thin"><div id="st-bar"></div></div><span>&nbsp;&nbsp;&nbsp;</span></div>
+      <div class="ecg-row"><canvas id="ecg" width="150" height="34"></canvas><span><b id="bpm">72</b>LPM</span></div>
+    </div>
+    <div id="vac">⚠ BRECHA DE CASCO — O₂ ×10</div>
+    <div id="sys-warn"></div>
+    <div id="objective" class="panel"></div>
+    <div id="reticle"><span class="ring"></span><span class="dot"></span></div>
+    <div id="prompt"></div>
+    <div id="toasts"></div>
+    <div id="item-label"></div>
+    <div id="inventory" class="panel"></div>
+    <div id="weapon" class="panel">
+      <div class="row"><span>PLASMA HX-9</span><span id="weapon-pct">100%</span></div>
+      <div class="track"><div id="weapon-bar"></div></div>
+    </div>
+    <div id="hack" class="panel">
+      <div id="hack-title"></div>
+      <div class="bar"><div id="hack-zone"></div><div id="hack-cursor"></div></div>
+      <div class="foot"><span>[E] / [CLIC] SINCRONIZAR · [Q] ABORTAR</span><span id="hack-pips"></span></div>
+    </div>
+    <div id="xor" class="panel">
+      <div id="xor-title"></div>
+      <div class="xrow"><span class="lbl">REG</span><span id="xor-reg" class="bits"></span></div>
+      <div class="xrow"><span class="lbl">OBJ</span><span id="xor-target" class="bits"></span></div>
+      <div class="xsep"></div>
+      <div id="xor-keys"></div>
+      <div class="tbar"><div id="xor-time"></div></div>
+      <div class="foot"><span>[1-4] APLICAR CLAVE (⊕) · [Q] ABORTAR</span><span id="xor-pips"></span></div>
+    </div>
+    <div id="log" class="panel">
+      <div id="log-title"></div>
+      <div id="log-meta"></div>
+      <div id="log-body"></div>
+      <div class="foot">[E] CERRAR · [W/S] DESPLAZAR</div>
+    </div>
+  </div>
+
+  <div id="alert"><div class="banner">⚠ ALERTA DE CONTENCIÓN ⚠</div></div>
+  <div id="cinebars"></div>
+  <div id="caption"></div>
+  <div id="fade"></div>
+
+  <div id="start" class="overlay">
+    <div class="card panel">
+      <h1>ODISEA-IX</h1>
+      <h2>PROTOCOLO DE RECUPERACIÓN // HELIX-ARES</h2>
+      <div id="build" style="font-size:10px;letter-spacing:.2em;opacity:.55;margin:-10px 0 14px">COMPILACIÓN 12 · HOLOGRAMA SIN ZUMBIDO</div>
+      <p>Una nave de investigación genética lleva 41 días en silencio en órbita de Marte. Usted es el contratista enviado a bordo. Nadie más va a venir.</p>
+      <div id="boot-status">ARRANCANDO</div>
+      <button id="start-btn" class="btn" disabled>INICIAR SECUENCIA</button>
+      <button id="continue-btn" class="btn" style="display:none;background:var(--cyan)" disabled>CONTINUAR · ÚLTIMO PUNTO DE CONTROL</button>
+      <div class="stripe"></div>
+      <div class="controls">
+        <kbd>WASD</kbd><span>Moverse</span>
+        <kbd>RATÓN</kbd><span>Mirar (clic para capturar el cursor)</span>
+        <kbd>SHIFT</kbd><span>Correr</span>
+        <kbd>E</kbd><span>Interactuar / recoger / piratear / leer bitácoras</span>
+        <kbd>1–4</kbd><span>Claves de descifrado XOR (compuertas avanzadas)</span>
+        <kbd>Q</kbd><span>Abortar pirateo</span>
+        <kbd>F</kbd><span>Linterna (la empuña)</span>
+        <kbd>CLIC</kbd><span>Disparar rifle de plasma</span>
+        <kbd>1–5 · RUEDA</kbd><span>Inventario</span>
+        <kbd>ENTER</kbd><span>Saltar cinemática</span>
+        <kbd>F8</kbd><span>Diagnóstico gráfico (GPU y píxeles inválidos)</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay">
+    <div class="card panel" style="text-align:center">
+      <h2 style="margin:0 0 8px">ENLACE NEURAL INTERRUMPIDO</h2>
+      <h1 style="font-size:28px">PAUSA</h1>
+      <p style="margin-top:14px">Haga clic para reanudar</p>
+    </div>
+  </div>
+
+  <div id="death" class="overlay">
+    <div class="card panel" style="text-align:center">
+      <h2>TELEMETRÍA DEL TRAJE EVA-7</h2>
+      <h1 style="font-size:clamp(22px,5vw,36px)">SEÑALES VITALES PERDIDAS</h1>
+      <div class="stripe"></div>
+      <p id="death-msg"></p>
+      <p id="death-hint"></p>
+    </div>
+  </div>
+
+  <div id="end" class="overlay">
+    <div class="card panel" style="text-align:center">
+      <h2>TRANSMISIÓN A HELIX-ARES</h2>
+      <h1 style="font-size:clamp(24px,6vw,40px)">MUESTRA RECUPERADA</h1>
+      <div class="stripe"></div>
+      <p>La cápsula se desacopla de la ODISEA-IX. Algo golpea el casco desde dentro del maletín.</p>
+      <button class="btn" onclick="location.reload()">NUEVA PARTIDA</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { Engine } from './engine.js';
+    import { Synth } from './audio.js';
+    import { Music, SoundScene } from './music.js';
+    import { Player, Hud } from './player.js';
+    import { Mission } from './mission.js';
+    import { Intro } from './intro.js';
+    import { ViewModel } from './viewmodel.js';
+    import { PhysicsWorld } from './physics.js';
+    import { Hazards } from './hazards.js';
+    import { EnemySystem } from './enemies.js';
+    import { Save } from './save.js';
+    import { mergeStatic } from './batching.js';
+    import { generateTextureLibrary, mulberry32 } from './procedural-assets.js';
+    import { buildShip, buildCapsule, LEVEL } from './level.js';
+
+    const statusEl = document.getElementById('boot-status');
+    const startBtn = document.getElementById('start-btn');
+    const contBtn = document.getElementById('continue-btn');
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+    const say = async (msg) => { statusEl.textContent = msg; await nextFrame(); await nextFrame(); };
+
+    async function boot() {
+      try {
+        await say('INICIALIZANDO NÚCLEO GRÁFICO WEBGL 2');
+        const engine = new Engine(document.getElementById('view'));
+
+        // Semilla de la partida: la del punto de control o una nueva (las
+        // zonas clave son fijas; pasillos intermedios, rutas y objetos varían).
+        const save = Save.load();
+        const auto = Save.takeAutoContinue();
+        const seed = save ? save.seed : (Math.random() * 0x7fffffff) | 0;
+
+        await say('SINTETIZANDO TEXTURAS PROCEDURALES');
+        const t0 = performance.now();
+        const lib = generateTextureLibrary();
+
+        await say('ENSAMBLANDO GEOMETRÍA DE LA NAVE · SEMILLA ' + seed.toString(16).toUpperCase());
+        const ship = buildShip(lib, seed);
+        const capsule = buildCapsule(lib);
+        engine.scene.add(ship.group, capsule.group);
+        capsule.group.position.set(26, 9, 70);
+        engine.registerFlickers(ship.lights);
+        engine.registerFlickers(capsule.flickers);
+        ship.shafts.forEach((m) => engine.registerShaft(m));
+        const batch = mergeStatic(ship);
+        console.info('Geometría estática fusionada:', batch.before, '→', batch.after, 'mallas');
+
+        await say('CALCULANDO FÍSICA Y ACÚSTICA');
+        const physics = new PhysicsWorld(ship.colliders);
+        ship.surfaces.forEach((x) => physics.addSurface(x));
+        ship.arcs.forEach((x) => physics.addArc(x));
+        ship.ceilings.forEach((x) => physics.addCeiling(x));
+
+        const hud = new Hud();
+        const synth = new Synth();
+        const sound = new SoundScene(synth, physics);
+        const music = new Music(synth);
+        const rng = mulberry32(seed ^ 0x5bd1e995);
+        const hazards = new Hazards(engine, ship, synth, sound, rng);
+        const enemies = new EnemySystem(engine, ship, physics, synth, rng);
+        // Fuentes ambientales posicionales (ocluidas por muros y compuertas).
+        const S = LEVEL.server, Lb = LEVEL.lab, C = LEVEL.collapse;
+        sound.add({ x: (S.x0 + S.x1) / 2, y: 1.5, z: (S.z0 + S.z1) / 2 }, 'server');
+        sound.add({ x: 0, y: 1.5, z: (Lb.z0 + Lb.z1) / 2 }, 'reactor');
+        sound.add({ x: -0.6, y: 1.4, z: (C.z0 + C.z1) / 2 }, 'wind');
+        for (const b of ship.beacons) if (b.f && b.f.pos) sound.add(b.f.pos, 'siren');
+
+        const mission = new Mission(engine, ship, synth, hud);
+        mission.attach({ enemies, music, sound });
+        const player = new Player(engine, ship, mission, synth, hud, physics);
+        mission.setPlayer(player);
+        enemies.setPlayer(player);
+        const viewmodel = new ViewModel(engine, player, synth, hud, lib);
+        viewmodel.attach(physics, enemies);
+        player.viewmodel = viewmodel;
+        engine.add((dt, t) => viewmodel.update(dt, t));
+        engine.add((dt, t) => {
+          hazards.update(dt, t, player);
+          enemies.update(dt, t);
+          player.threat = enemies.threat;
+          sound.update(dt, player.rig.position);
+          music.setIntensity(Math.max(enemies.threat, hazards.danger * 0.8, mission.state === 'alert' ? 0.5 : 0));
+        });
+        const intro = new Intro(engine, ship, capsule, mission, synth, hud, player);
+
+        await say('COMPILANDO SHADERS');
+        engine.onShaderError = () => hud.warn('AVISO: UN SHADER NO COMPILÓ — EFECTO DESACTIVADO');
+        engine.onContextChange = (lost) => {
+          hud.warn(lost ? 'CONTEXTO GRÁFICO PERDIDO — RECUPERANDO…' : '');
+          if (!lost) setTimeout(() => location.reload(), 300);
+        };
+        engine.patchShaders();
+        engine.sunLight.intensity = 3.2;
+        engine.camera.position.set(46, 15, 95);
+        engine.camera.lookAt(0, 1.35, 4);
+        try {
+          intro.holo.setVisible(true);
+          engine.renderer.compile(engine.scene, engine.camera);
+          intro.holo.setVisible(false);
+          viewmodel.precompile();
+        } catch (err) {
+          console.error(err);
+          hud.warn('AVISO: COMPILACIÓN DE SHADERS INCOMPLETA');
+        }
+        engine.freezeStaticShadows();
+        engine.start();
+        hud.setFade(0.35);
+
+        statusEl.textContent = `SISTEMAS EN LÍNEA · ${Math.round(performance.now() - t0)} ms`;
+        document.getElementById('pause').addEventListener('click', () => synth.init());
+        const begin = (resume) => {
+          synth.init();
+          music.start();
+          sound.start();
+          document.getElementById('start').classList.add('hidden');
+          player.requestLock();
+          if (resume) intro.resume(save);
+          else { Save.clear(); intro.start(); }
+        };
+        startBtn.disabled = false;
+        startBtn.addEventListener('click', () => begin(false), { once: true });
+        if (save) {
+          contBtn.style.display = 'block';
+          contBtn.disabled = false;
+          contBtn.addEventListener('click', () => begin(true), { once: true });
+          // Tras morir se reanuda directamente (el audio necesita un gesto:
+          // el primer clic sobre el lienzo lo activa).
+          if (auto) {
+            begin(true);
+            engine.paused = true;
+            hud.showPause(true);
+          }
+        } else if (auto) {
+          startBtn.click();
+        }
+
+        // F8: diagnóstico gráfico (píxeles inválidos en magenta + GPU en pantalla).
+        window.addEventListener('keydown', (ev) => {
+          if (ev.code !== 'F8') return;
+          ev.preventDefault();
+          const d = engine.toggleDiagnostics();
+          hud.warn(d.on ? `DIAGNÓSTICO · GPU: ${d.gpu} · ERRORES DE SHADER: ${d.shaderErrors} · MAGENTA = PÍXEL INVÁLIDO` : '');
+        });
+        window.__game = { engine, ship, player, intro, mission, physics, enemies, hazards, music, sound, viewmodel };
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'FALLO DEL SISTEMA: ' + err.message;
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>
